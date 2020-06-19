@@ -6,8 +6,8 @@ verify_ssl = true
 [dev-packages]
 
 [packages]
-fake2db = {editable = true,file = "file:///Users/gautham/Workspace/decalab/fake2db"}
 psycopg2 = "*"
+Faker==0.7.11
 
 [requires]
 python_version = "3.7"
