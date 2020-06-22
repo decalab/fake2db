@@ -5,6 +5,7 @@ from .helpers import fake2db_logger, str_generator, rnd_id_generator
 
 
 logger, extra_information = fake2db_logger()
+BATCH_SIZE = 5000
 
 try:
     import mysql.connector
@@ -15,6 +16,11 @@ except ImportError:
 
 
 class Fake2dbMySqlHandler(BaseHandler):
+
+    @staticmethod
+    def _batch_execute(conn, cursor, sql, data):
+        cursor.executemany(sql, data)
+        conn.commit()
 
     def fake2db_mysql_initiator(self, host, port, password, username, number_of_rows, name=None, custom=None):
         '''Main handler for the operation
@@ -46,8 +52,7 @@ class Fake2dbMySqlHandler(BaseHandler):
 
         logger.warning('Table creation ops finished', extra=extra_information)
 
-        self.data_filler_simple_registration(rows, cursor, conn)
-        self.data_filler_detailed_registration(rows, cursor, conn)
+        self.data_filler_user_registration(rows, cursor, conn)
         self.data_filler_company(rows, cursor, conn)
         self.data_filler_user_agent(rows, cursor, conn)
         self.data_filler_customer(rows, cursor, conn)
@@ -86,59 +91,60 @@ class Fake2dbMySqlHandler(BaseHandler):
         '''
         tables = {}
 
-        tables['simple_registration'] = (
-            "CREATE TABLE `simple_registration` ("
-            "  `id` varchar(200) NOT NULL,"
-            "  `email` varchar(200) NOT NULL,"
+        tables['user_registration'] = (
+            "CREATE TABLE IF NOT EXISTS `user_registration` ("
+            "  `id`MEDIUMINT NOT NULL AUTO_INCREMENT,"
+            "  `email` varchar(150) NOT NULL,"
             "  `password` varchar(200) NOT NULL,"
-            "  PRIMARY KEY (`id`)"
-            ") ENGINE=InnoDB")
-
-        tables['detailed_registration'] = (
-            "CREATE TABLE `detailed_registration` ("
-            "  `id` varchar(200) NOT NULL,"
-            "  `email` varchar(200) NOT NULL,"
-            "  `password` varchar(200) NOT NULL,"
-            "  `lastname` varchar(200) NOT NULL,"
-            "  `name` varchar(200) NOT NULL,"
+            "  `last_name` varchar(200) NOT NULL,"
+            "  `first_name` varchar(200) NOT NULL,"
             "  `address` varchar(200) NOT NULL,"
-            "  `phone` varchar(200) NOT NULL,"
+            "  `phone` varchar(50) NOT NULL,"
+            "  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,"
+            "  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP,"
             "  PRIMARY KEY (`id`)"
             ") ENGINE=InnoDB")
 
         tables['user_agent'] = (
-            "CREATE TABLE `user_agent` ("
-            "  `id` varchar(200) NOT NULL,"
-            "  `ip` varchar(200) NOT NULL,"
-            "  `countrycode` varchar(200) NOT NULL,"
+            "CREATE TABLE IF NOT EXISTS `user_agent` ("
+            "  `id` MEDIUMINT NOT NULL AUTO_INCREMENT,"
+            "  `ip` varchar(128) NOT NULL,"
+            "  `countrycode` varchar(10) NOT NULL,"
             "  `useragent` varchar(200) NOT NULL,"
+            "  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,"
+            "  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP,"
             "  PRIMARY KEY (`id`)"
             ") ENGINE=InnoDB")
 
         tables['company'] = (
-            "CREATE TABLE `company` ("
-            "  `id` varchar(200) NOT NULL,"
+            "CREATE TABLE IF NOT EXISTS `company` ("
+            "  `id` MEDIUMINT NOT NULL AUTO_INCREMENT,"
             "  `name` varchar(200) NOT NULL,"
-            "  `sdate` date NOT NULL,"
+            "  `signup_date` date NOT NULL,"
             "  `email` varchar(200) NOT NULL,"
             "  `domain` varchar(200) NOT NULL,"
             "  `city` varchar(200) NOT NULL,"
+            "  `country` varchar(200) NOT NULL,"
+            "  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,"
+            "  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP,"
             "  PRIMARY KEY (`id`)"
             ") ENGINE=InnoDB")
 
         tables['customer'] = (
-            "CREATE TABLE `customer` ("
-            "  `id` varchar(200) NOT NULL,"
-            "  `name` varchar(200) NOT NULL,"
-            "  `lastname` varchar(200) NOT NULL,"
+            "CREATE TABLE IF NOT EXISTS `customer` ("
+            "  `id` MEDIUMINT NOT NULL AUTO_INCREMENT,"
+            "  `first_name` varchar(200) NOT NULL,"
+            "  `last_name` varchar(200) NOT NULL,"
             "  `address` varchar(200) NOT NULL,"
             "  `country` varchar(200) NOT NULL,"
             "  `city` varchar(200) NOT NULL,"
             "  `registry_date` varchar(200) NOT NULL,"
             "  `birthdate` varchar(200) NOT NULL,"
-            "  `email` varchar(200) NOT NULL,"
-            "  `phone_number` varchar(200) NOT NULL,"
-            "  `locale` varchar(200) NOT NULL,"
+            "  `email` varchar(150) NOT NULL,"
+            "  `phone_number` varchar(50) NOT NULL,"
+            "  `locale` varchar(20) NOT NULL,"
+            "  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,"
+            "  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP,"
             "  PRIMARY KEY (`id`)"
             ") ENGINE=InnoDB")
 
@@ -149,8 +155,8 @@ class Fake2dbMySqlHandler(BaseHandler):
         '''
 
         custom_d = faker_options_container()
-        sqlst = "CREATE TABLE `custom` (`id` varchar(200) NOT NULL,"
-        custom_payload = "INSERT INTO custom (id,"
+        sqlst = "CREATE TABLE `custom` (`id` MEDIUMINT NOT NULL AUTO_INCREMENT,"
+        custom_payload = "INSERT INTO custom ("
         
         # form the sql query that will set the db up
         for c in custom:
@@ -190,46 +196,29 @@ class Fake2dbMySqlHandler(BaseHandler):
         except Exception as e:
             logger.error(e, extra=extra_information)
     
-    def data_filler_simple_registration(self, number_of_rows, cursor, conn):
-        '''creates and fills the table with simple regis. information
-        '''
-        simple_registration_data = []
-        
-        try:
-            for i in range(0, number_of_rows):
-                simple_registration_data.append((
-                    rnd_id_generator(self), self.faker.safe_email(), self.faker.md5(raw_output=False)))
-                
-            simple_registration_payload = ("INSERT INTO simple_registration "
-                                               "(id, email, password) "
-                                               "VALUES (%s, %s, %s)")
-            
-            cursor.executemany(simple_registration_payload, simple_registration_data)
-            conn.commit()
-
-            logger.warning('simple_registration Commits are successful after write job!', extra=extra_information)
-        except Exception as e:
-            logger.error(e, extra=extra_information)
-
-    def data_filler_detailed_registration(self, number_of_rows, cursor, conn):
+    def data_filler_user_registration(self, number_of_rows, cursor, conn):
         '''creates and fills the table with detailed regis. information
         '''
-        detailed_registration_data = []
-        
+        user_registration_data = []
+        batch_count = 0
+        sql = ("INSERT INTO user_registration "
+               "(email, password, first_name, last_name, address, phone) "
+               "VALUES (%s, %s, %s, %s, %s, %s)")
         try:
             for i in range(0, number_of_rows):
-                detailed_registration_data.append((
-                    rnd_id_generator(self), self.faker.safe_email(), self.faker.md5(raw_output=False),
-                    self.faker.last_name(), self.faker.first_name(), self.faker.address(), self.faker.phone_number()))
-            detailed_registration_payload = ("INSERT INTO detailed_registration "
-                                             "(id, email, password, lastname, name,"
-                                             "address, phone) "
-                                             "VALUES (%s, %s, %s, %s, %s, %s, %s)")
-            
-            cursor.executemany(detailed_registration_payload, detailed_registration_data)
-            conn.commit()
+                user_registration_data.append(
+                    (self.faker.safe_email(), self.faker.md5(raw_output=False), self.faker.first_name(),
+                     self.faker.last_name(), self.faker.address(), self.faker.phone_number()))
+                batch_count += 1
+                if batch_count > BATCH_SIZE:
+                    self._batch_execute(conn=conn, cursor=cursor, sql=sql, data=user_registration_data)
+                    user_registration_data = []
+                    batch_count = 0
 
-            logger.warning('detailed_registration Commits are successful after write job!', extra=extra_information)
+            if batch_count > 0 and len(user_registration_data) > 0:
+                self._batch_execute(conn=conn, cursor=cursor, sql=sql, data=user_registration_data)
+
+            logger.warning('user_registration Commits are successful after write job!', extra=extra_information)
 
         except Exception as e:
             logger.error(e, extra=extra_information)
@@ -238,18 +227,23 @@ class Fake2dbMySqlHandler(BaseHandler):
         '''creates and fills the table with user agent data
         '''
         user_agent_data = []
-        
+        batch_count = 0
+        sql = ("INSERT INTO user_agent "
+               "(ip, countrycode, useragent) "
+               "VALUES (%s, %s, %s)")
         try:
             for i in range(0, number_of_rows):
-                user_agent_data.append((rnd_id_generator(self), self.faker.ipv4(),
-                                        self.faker.country_code(), self.faker.user_agent()))
-                
-            user_agent_payload = ("INSERT INTO user_agent "
-                                  "(id, ip, countrycode, useragent) "
-                                  "VALUES (%s, %s, %s, %s)")
+                user_agent_data.append((self.faker.ipv4(),self.faker.country_code(), self.faker.user_agent()))
+                batch_count += 1
+                if batch_count > BATCH_SIZE:
+                    self._batch_execute(conn=conn, cursor=cursor, sql=sql, data=user_agent_data)
+                    user_agent_data = []
+                    batch_count = 0
+
+            if batch_count > 0 and len(user_agent_data) > 0:
+                self._batch_execute(conn=conn, cursor=cursor, sql=sql, data=user_agent_data)
+
             
-            cursor.executemany(user_agent_payload, user_agent_data)
-            conn.commit()
             logger.warning('user_agent Commits are successful after write job!', extra=extra_information)
         except Exception as e:
             logger.error(e, extra=extra_information)
@@ -258,19 +252,27 @@ class Fake2dbMySqlHandler(BaseHandler):
         '''creates and fills the table with company data
         '''
         companies_data = []
-        
+        sql = ("INSERT INTO company "
+               "(name, signup_date, email, domain, city, country) "
+               "VALUES (%s, %s, %s, %s, %s, %s)")
+        batch_count = 0
+
         try:
             for i in range(0, number_of_rows):
                 
-                companies_data.append((rnd_id_generator(self), self.faker.company(), self.faker.date(pattern="%Y-%m-%d"),
-                                  self.faker.company_email(), self.faker.safe_email(), self.faker.city()))
-                
-            companies_payload = ("INSERT INTO company "
-                                 "(id, name, sdate, email, domain, city) "
-                                 "VALUES (%s, %s, %s, %s, %s, %s)")
-            
-            cursor.executemany(companies_payload, companies_data)
-            conn.commit()
+                companies_data.append((self.faker.company(), self.faker.date(pattern="%Y-%m-%d"),
+                                  self.faker.company_email(), self.faker.safe_email(), self.faker.city(),
+                                       self.faker.country()))
+
+                batch_count += 1
+                if batch_count > BATCH_SIZE:
+                    self._batch_execute(conn=conn, cursor=cursor, sql=sql, data=companies_data)
+                    companies_data = []
+                    batch_count = 0
+
+            if batch_count > 0 and len(companies_data) > 0:
+                self._batch_execute(conn=conn, cursor=cursor, sql=sql, data=companies_data)
+
             logger.warning('companies Commits are successful after write job!', extra=extra_information)
         except Exception as e:
             logger.error(e, extra=extra_information)
@@ -279,22 +281,28 @@ class Fake2dbMySqlHandler(BaseHandler):
         '''creates and fills the table with customer
         '''
         customer_data = []
-        
+        sql = ("INSERT INTO customer "
+               "(first_name, last_name, address, country, city, registry_date, "
+               "birthdate, email, phone_number, locale)"
+               "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)")
+        batch_count = 0
         try:
             for i in range(0, number_of_rows):
                 
                 customer_data.append((
-                    rnd_id_generator(self), self.faker.first_name(), self.faker.last_name(), self.faker.address(),
+                    self.faker.first_name(), self.faker.last_name(), self.faker.address(),
                     self.faker.country(), self.faker.city(), self.faker.date(pattern="%d-%m-%Y"),
                     self.faker.date(pattern="%d-%m-%Y"), self.faker.safe_email(), self.faker.phone_number(),
                     self.faker.locale()))
-                
-            customer_payload = ("INSERT INTO customer "
-                                "(id, name, lastname, address, country, city, registry_date, birthdate, email, "
-                                "phone_number, locale)"
-                                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
-            cursor.executemany(customer_payload, customer_data)
-            conn.commit()
+
+                batch_count += 1
+                if batch_count > BATCH_SIZE:
+                    self._batch_execute(conn=conn, cursor=cursor, sql=sql, data=customer_data)
+                    customer_data = []
+                    batch_count = 0
+
+            if batch_count > 0 and len(customer_data) > 0:
+                self._batch_execute(conn=conn, cursor=cursor, sql=sql, data=customer_data)
             logger.warning('detailed_registration Commits are successful after write job!', extra=extra_information)
         except Exception as e:
             logger.error(e, extra=extra_information)
