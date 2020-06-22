@@ -8,6 +8,7 @@ verify_ssl = true
 [packages]
 psycopg2 = "*"
 Faker==0.7.11
+mysql-connector-python==8.0.20
 
 [requires]
 python_version = "3.7"
