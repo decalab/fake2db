@@ -4,12 +4,26 @@ from .base_handler import BaseHandler
 from .custom import faker_options_container
 from .helpers import fake2db_logger, str_generator
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+from psycopg2 import extras
+
 
 logger, extra_information = fake2db_logger()
 d = extra_information
-
+BATCH_SIZE = 5000
 
 class Fake2dbPostgresqlHandler(BaseHandler):
+
+    @staticmethod
+    def _check_table_exists(conn, table_name):
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        cur = conn.cursor()
+        cur.execute("SELECT table_name FROM information_schema.tables WHERE table_name = '%s'" % table_name)
+        return cur.rowcount > 0
+
+    @staticmethod
+    def _batch_execute(conn, cur, sql, argslist, page_size=100):
+        extras.execute_batch(cur=cur, sql=sql, argslist=argslist, page_size=page_size)
+        conn.commit()
 
     def fake2db_initiator(self, number_of_rows, **connection_kwargs):
         '''Main handler for the operation
@@ -17,7 +31,6 @@ class Fake2dbPostgresqlHandler(BaseHandler):
         rows = number_of_rows
         cursor, conn = self.database_caller_creator(number_of_rows, **connection_kwargs)
 
-        self.data_filler_simple_registration(rows, cursor, conn)
         self.data_filler_detailed_registration(rows, cursor, conn)
         self.data_filler_company(rows, cursor, conn)
         self.data_filler_user_agent(rows, cursor, conn)
@@ -109,55 +122,38 @@ class Fake2dbPostgresqlHandler(BaseHandler):
         except Exception as e:
             logger.error(e, extra=d)
             
-    def data_filler_simple_registration(self, number_of_rows, cursor, conn):
-        '''creates and fills the table with simple regis. information
-        '''
-
-        cursor.execute("CREATE TABLE simple_registration (id serial PRIMARY KEY, email varchar(300), password varchar(300));")
-        conn.commit()
-
-        simple_registration_data = []
-
-        try:
-
-            for i in range(0, number_of_rows):
-                simple_registration_data.append((self.faker.safe_email(), self.faker.md5(raw_output=False)))
-            simple_registration_payload = ("INSERT INTO simple_registration "
-                                           "(email, password) "
-                                           "VALUES (%s, %s)")
-            cursor.executemany(simple_registration_payload, simple_registration_data)
-            conn.commit()
-
-            logger.warning('simple_registration Commits are successful after write job!', extra=d)
-
-        except Exception as e:
-            logger.error(e, extra=d)
-
     def data_filler_detailed_registration(self, number_of_rows, cursor, conn):
         '''creates and fills the table with detailed regis. information
         '''
 
-        cursor.execute(
-            "CREATE TABLE detailed_registration "
-            "(id serial PRIMARY KEY, email varchar(300), password varchar(300), "
-            "lastname varchar(300), name varchar(300), adress varchar(300), phone varchar(300));")
-        conn.commit()
-        detailed_registration_data = []
-
-        try:
-
-            for i in range(0, number_of_rows):
-
-                detailed_registration_data.append((self.faker.safe_email(), self.faker.md5(raw_output=False), self.faker.last_name(),
-                                                   self.faker.first_name(), self.faker.address(), self.faker.phone_number()))
-
-            detailed_registration_payload = ("INSERT INTO detailed_registration "
-                                             "(email, password, lastname, name, adress, phone) "
-                                             "VALUES (%s, %s, %s, %s, %s, %s)")
-
-            cursor.executemany(detailed_registration_payload, detailed_registration_data)
+        if not self._check_table_exists(conn, "user_registration"):
+            cursor.execute(
+                "CREATE TABLE user_registration "
+                "(id serial PRIMARY KEY, email varchar(150), password varchar(300), "
+                "last_name varchar(300), first_name varchar(300), address varchar(300), phone varchar(300),"
+                "created_at timestamp with time zone NOT NULL DEFAULT (current_timestamp AT TIME ZONE 'UTC'),"
+                "updated_at timestamp with time zone NOT NULL DEFAULT (current_timestamp AT TIME ZONE 'UTC'));")
             conn.commit()
-            logger.warning('detailed_registration Commits are successful after write job!', extra=d)
+        detailed_registration_data = []
+        batch_count = 0
+        sql = ("INSERT INTO user_registration "
+               "(email, password, first_name, last_name, address, phone) "
+               "VALUES (%s, %s, %s, %s, %s, %s)")
+        try:
+            for i in range(0, number_of_rows):
+                detailed_registration_data.append((self.faker.safe_email(), self.faker.md5(raw_output=False), self.faker.first_name(),
+                                                   self.faker.last_name(), self.faker.address(), self.faker.phone_number()))
+                batch_count += 1
+                if batch_count > BATCH_SIZE:
+                    self._batch_execute(conn=conn, cur=cursor, sql=sql, argslist=detailed_registration_data,
+                                        page_size=1000)
+                    detailed_registration_data = []
+                    batch_count = 0
+
+            if batch_count > 0 and len(detailed_registration_data) > 0:
+                self._batch_execute(conn, cursor, sql, detailed_registration_data)
+
+            logger.warning('user_registration Commits are successful after write job!', extra=d)
 
         except Exception as e:
             logger.error(e, extra=d)
@@ -166,25 +162,33 @@ class Fake2dbPostgresqlHandler(BaseHandler):
         '''creates and fills the table with user agent data
         '''
 
-        cursor.execute(
-            "CREATE TABLE user_agent (id serial PRIMARY KEY, ip varchar(300), countrycode varchar(300), useragent varchar(300));")
-        conn.commit()
+        if not self._check_table_exists(conn, "user_agent"):
+            cursor.execute(
+                "CREATE TABLE user_agent (id serial PRIMARY KEY, ip varchar(128), countrycode varchar(10), "
+                "useragent varchar(300),"
+                "created_at timestamp with time zone NOT NULL DEFAULT (current_timestamp AT TIME ZONE 'UTC'));")
+            conn.commit()
 
         user_agent_data = []
-
+        batch_count = 0
+        sql = ("INSERT INTO user_agent "
+               "(ip, countrycode, useragent) "
+               "VALUES (%s, %s, %s)")
         try:
-
             for i in range(0, number_of_rows):
 
                 user_agent_data.append((self.faker.ipv4(), self.faker.country_code(),
                  self.faker.user_agent()))
 
-            user_agent_payload = ("INSERT INTO user_agent "
-                               "(ip, countrycode, useragent) "
-                               "VALUES (%s, %s, %s)")
+                batch_count +=1
+                if batch_count > BATCH_SIZE:
+                    self._batch_execute(conn=conn, cur=cursor, sql=sql, argslist=user_agent_data,
+                                        page_size=1000)
+                    user_agent_data = []
+                    batch_count = 0
 
-            cursor.executemany(user_agent_payload, user_agent_data)
-            conn.commit()
+            if batch_count > 0 and len(user_agent_data) > 0:
+                self._batch_execute(conn, cursor, sql, user_agent_data)
 
             logger.warning('user_agent Commits are successful after write job!', extra=d)
         except Exception as e:
@@ -194,24 +198,36 @@ class Fake2dbPostgresqlHandler(BaseHandler):
         '''creates and fills the table with company data
         '''
 
-        cursor.execute(
-            "CREATE TABLE company (id serial PRIMARY KEY, "
-            "name varchar(300), sdate varchar(300), email varchar(300), domain varchar(300), city varchar(300));")
-        conn.commit()
+        if not self._check_table_exists(conn, "company"):
+            cursor.execute(
+                "CREATE TABLE company (id serial PRIMARY KEY, "
+                "name varchar(300), signup_date date, email varchar(150), domain varchar(200), city varchar(200), "
+                "country varchar(200), "
+                "created_at timestamp with time zone NOT NULL DEFAULT (current_timestamp AT TIME ZONE 'UTC'),"
+                "updated_at timestamp with time zone NOT NULL DEFAULT (current_timestamp AT TIME ZONE 'UTC'));")
+            conn.commit()
         company_data = []
+        batch_count = 0
+        sql = ("INSERT INTO company "
+               "(name, signup_date, email, domain, city, country) "
+               "VALUES (%s, %s, %s, %s, %s, %s)")
 
         try:
             for i in range(0, number_of_rows):
 
-                company_data.append((self.faker.company(), self.faker.date(pattern="%d-%m-%Y"),
-                                     self.faker.company_email(), self.faker.safe_email(), self.faker.city()))
+                company_data.append((self.faker.company(), self.faker.date(pattern="%Y-%m-%d"),
+                                     self.faker.company_email(), self.faker.safe_email(), self.faker.city(),
+                                     self.faker.country()))
+                batch_count += 1
+                if batch_count > BATCH_SIZE:
+                    self._batch_execute(conn=conn, cur=cursor, sql=sql, argslist=company_data,
+                                        page_size=1000)
+                    company_data = []
+                    batch_count = 0
 
-            company_payload = ("INSERT INTO company "
-                               "(name, sdate, email, domain, city) "
-                               "VALUES (%s, %s, %s, %s, %s)")
+            if batch_count > 0 and len(company_data) > 0:
+                self._batch_execute(conn, cursor, sql, company_data)
 
-            cursor.executemany(company_payload, company_data)
-            conn.commit()
             logger.warning('companies Commits are successful after write job!', extra=d)
         except Exception as e:
             logger.error(e, extra=d)
@@ -219,31 +235,38 @@ class Fake2dbPostgresqlHandler(BaseHandler):
     def data_filler_customer(self, number_of_rows, cursor, conn):
         '''creates and fills the table with customer data
         '''
-
-        cursor.execute(
-            "CREATE TABLE customer (id serial PRIMARY KEY, "
-            "name varchar(300), lastname varchar(300), address varchar(300), country varchar(300), "
-            "city varchar(300), registry_date varchar(300), birthdate varchar(300), email varchar(300), "
-            "phone_number varchar(300), locale varchar(300));")
-        conn.commit()
+        if not self._check_table_exists(conn, "customer"):
+            cursor.execute(
+                "CREATE TABLE customer (id serial PRIMARY KEY, "
+                "first_name varchar(150), last_name varchar(150), address varchar(300), country varchar(200), "
+                "city varchar(200), registry_date date, birthdate date, email varchar(150), "
+                "phone_number varchar(50), locale varchar(10));")
+            conn.commit()
 
         customer_data = []
-
+        sql = ("INSERT INTO customer "
+                            "(first_name, last_name, address, country, city, registry_date, "
+                            "birthdate, email, phone_number, locale)"
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)")
+        batch_count = 0
         try:
             for i in range(0, number_of_rows):
 
                 customer_data.append((self.faker.first_name(), self.faker.last_name(), self.faker.address(),
-                                      self.faker.country(), self.faker.city(), self.faker.date(pattern="%d-%m-%Y"),
-                                      self.faker.date(pattern="%d-%m-%Y"), self.faker.safe_email(), self.faker.phone_number(),
-                                      self.faker.locale()))
+                                      self.faker.country(), self.faker.city(), self.faker.date(pattern="%Y-%m-%d"),
+                                      self.faker.date(pattern="%Y-%m-%d"), self.faker.safe_email(),
+                                      self.faker.phone_number(), self.faker.locale()))
 
-            customer_payload = ("INSERT INTO customer "
-                                "(name, lastname, address, country, city, registry_date, "
-                                "birthdate, email, phone_number, locale)"
-                                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)")
+                batch_count += 1
+                if batch_count > BATCH_SIZE:
+                    self._batch_execute(conn=conn, cur=cursor, sql=sql, argslist=customer_data,
+                                        page_size=1000)
+                    customer_data = []
+                    batch_count = 0
 
-            cursor.executemany(customer_payload, customer_data)
-            conn.commit()
+            if batch_count > 0 and len(customer_data) > 0:
+                self._batch_execute(conn, cursor, sql, customer_data)
+
             logger.warning('customer Commits are successful after write job!', extra=d)
         except Exception as e:
             logger.error(e, extra=d)

@@ -3,8 +3,7 @@ import getpass
 import subprocess
 import time
 import sys
-from .custom import faker_options_container
-from .helpers import fake2db_logger
+from fake2db.helpers import fake2db_logger
 
 logger, extra_information = fake2db_logger()
 
@@ -117,6 +116,7 @@ def main():
         logger.info('DB argument : %s', args.db, extra=extra_information)
 
         if args.custom:
+            from .custom import faker_options_container
             custom_d = faker_options_container()
             for c in args.custom:
                 if custom_d.get(c):
