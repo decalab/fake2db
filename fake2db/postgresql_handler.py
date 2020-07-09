@@ -53,7 +53,7 @@ class Fake2dbPostgresqlHandler(BaseHandler):
         try:
             # createdb
             conn = psycopg2.connect(
-                user=username, password=password, host=host, port=port)
+                user=username, password=password, host=host, port=port, dbname=dbname)
             conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
             cur = conn.cursor()
             cur.execute("SELECT * FROM pg_database WHERE datname = '%s'" % dbname)
