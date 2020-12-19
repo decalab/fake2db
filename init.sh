@@ -1,0 +1,1 @@
+poetry run python -m fake2db.fake2db $arg
